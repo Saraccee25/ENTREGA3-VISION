@@ -3,3 +3,5 @@ Noisy
 modelo_autoencoder_base.keras
 modelo_unet_despeckle.keras
 img_reto4
+outputs_reto4
+swinir_model
