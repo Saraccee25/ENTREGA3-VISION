@@ -1,14 +1,5 @@
-# -*- coding: utf-8 -*-
-# Reto 4 - Transformer para Restauracion de Imagenes SAR
-# Modelo: SwinIR (Swin Transformer for Image Restoration)
-# Sin reentrenamiento - se usa modelo preentrenado de HuggingFace
-# Ejecutar desde cualquier PC: python reto4.py
-
 # ==============================================================================
 # 1. IMPORTS Y DEPENDENCIAS
-#    Instalar si es necesario:
-#    pip install torch torchvision timm requests pillow
-#    pip install scikit-image matplotlib opencv-python numpy
 # ==============================================================================
 import os
 import sys
@@ -19,7 +10,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from pathlib import Path
 
-# scikit-image para metricas
+
 from skimage.metrics import structural_similarity as ssim
 from skimage.metrics import peak_signal_noise_ratio as psnr
 from PIL import Image
@@ -43,12 +34,10 @@ plt.rcParams.update({
 
 # ==============================================================================
 # 3. CARGA DE IMAGENES
-#    Acepta .tiff, .tif, .png, .jpg de la carpeta img_reto4
 # ==============================================================================
 def load_image(path):
     """Carga imagen como array float32 [0,1], RGB o gris->RGB"""
     img = np.array(Image.open(str(path)).convert('RGB')).astype(np.float32)
-    # normalizar segun el maximo real del archivo
     if img.max() > 1.0:
         img = img / 255.0
     return np.clip(img, 0.0, 1.0)
@@ -68,20 +57,13 @@ for p in img_paths:
 
 # ==============================================================================
 # 4. DETECCION DE DEFECTOS EN LAS IMAGENES
-#    Antes de restaurar se analizan los defectos visibles:
-#    - Ruido speckle (varianza local alta)
-#    - Bordes degradados (zona oscura en los bordes)
-#    - Regiones sin informacion (valores cercanos a 0)
 # ==============================================================================
 def detect_defects(img, name):
     gray = cv2.cvtColor((img * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY)
-    # Varianza local como proxy del ruido speckle
     mean_local = cv2.blur(gray.astype(np.float32), (7, 7))
     var_local   = cv2.blur((gray.astype(np.float32) - mean_local)**2, (7, 7))
     noise_level = float(np.mean(var_local))
-    # Proporcion de pixeles muy oscuros (sin informacion)
     dark_ratio  = float(np.mean(gray < 10))
-    # ENL de la imagen original
     mu, sig = np.mean(img), np.std(img)
     enl = (mu / sig)**2 if sig > 0 else 0.0
     print(f'  [{name}] noise_var={noise_level:.1f} | dark_ratio={dark_ratio:.3f} | ENL={enl:.2f}')
@@ -114,17 +96,9 @@ plt.show()
 
 # ==============================================================================
 # 6. SWINIR — DESCARGA Y CARGA DEL MODELO PREENTRENADO
-#
-#    SwinIR (Swin Transformer for Image Restoration) es un modelo Transformer
-#    que usa ventanas desplazadas (shifted windows) para capturar dependencias
-#    de largo alcance en la imagen.
-#
-#    Se usa el modelo preentrenado para denoising de imagen real (nivel sigma=15)
-#    publicado por los autores originales en GitHub.
-#    No requiere reentrenamiento.
 # ==============================================================================
 
-# --- 6a. Descargar codigo de SwinIR si no existe ---
+
 SWINIR_DIR = BASE_DIR / 'swinir_model'
 SWINIR_DIR.mkdir(exist_ok=True)
 
@@ -146,16 +120,16 @@ if not WEIGHTS_FILE.exists():
     urllib.request.urlretrieve(WEIGHTS_URL, WEIGHTS_FILE)
     print('  OK')
 
-# --- 6b. Importar SwinIR dinamicamente ---
+
 sys.path.insert(0, str(SWINIR_DIR))
-from network_swinir import SwinIR  # noqa: E402
+from network_swinir import SwinIR  
 
 import torch
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'\nDispositivo: {device}')
 
-# --- 6c. Instanciar modelo con los hiperparametros del checkpoint descargado ---
+
 model_swinir = SwinIR(
     upscale=1,
     in_chans=3,
@@ -171,7 +145,6 @@ model_swinir = SwinIR(
 )
 
 checkpoint = torch.load(str(WEIGHTS_FILE), map_location=device)
-# los pesos pueden estar bajo 'params' o directamente
 state_dict = checkpoint.get('params', checkpoint)
 model_swinir.load_state_dict(state_dict, strict=True)
 model_swinir.eval().to(device)
@@ -179,8 +152,6 @@ print('Modelo SwinIR cargado correctamente.')
 
 # ==============================================================================
 # 7. APLICAR SWINIR A CADA IMAGEN
-#    SwinIR requiere que el tamano sea multiplo de window_size (8).
-#    Se procesa en tiles de 512x512 si la imagen es grande.
 # ==============================================================================
 WINDOW = 8
 
@@ -200,7 +171,7 @@ def restore_image(img_np, model, dev, tile=512, tile_overlap=32):
     Usa procesamiento por tiles para manejar imagenes grandes sin colapsar RAM.
     """
     h, w, c = img_np.shape
-    # si la imagen cabe en un tile, procesar directamente
+
     if h <= tile and w <= tile:
         t = torch.from_numpy(img_np.transpose(2, 0, 1)).unsqueeze(0).float().to(dev)
         t, oh, ow = pad_to_multiple(t, WINDOW)
@@ -209,7 +180,7 @@ def restore_image(img_np, model, dev, tile=512, tile_overlap=32):
         out = out[:, :, :oh, :ow]
         return out.squeeze(0).permute(1, 2, 0).cpu().numpy().clip(0, 1)
 
-    # procesamiento por tiles
+
     result    = np.zeros_like(img_np)
     weight_map = np.zeros((h, w, 1), dtype=np.float32)
 
@@ -240,9 +211,6 @@ for name, img in images_orig.items():
 
 # ==============================================================================
 # 8. METRICAS CUANTITATIVAS
-#    Se compara la imagen original (ruidosa) con la restaurada.
-#    Como no hay ground truth separado para estas imagenes,
-#    se usan las metricas de auto-evaluacion mas el ENL.
 # ==============================================================================
 def compute_enl(img):
     mu, sig = np.mean(img), np.std(img)
@@ -279,7 +247,7 @@ print('='*65)
 colores = ['tomato', 'steelblue', 'darkorchid', 'seagreen',
            'goldenrod', 'coral', 'teal', 'slateblue']
 
-# ── 9a. Comparacion visual: Original vs Restaurada ───────────────────────────
+
 fig = plt.figure(figsize=(14, 5 * n_imgs))
 fig.suptitle('Comparacion Visual — Original vs SwinIR Restaurada',
              fontsize=14, fontweight='bold', y=1.01)
@@ -301,7 +269,7 @@ for row, (name, orig) in enumerate(images_orig.items()):
 plt.savefig(OUTPUT_DIR / 'comparacion_visual.png', dpi=130, bbox_inches='tight')
 plt.show()
 
-# ── 9b. Zoom en region central (bordes y detalles) ───────────────────────────
+
 fig = plt.figure(figsize=(14, 5 * n_imgs))
 fig.suptitle('Zoom — Analisis de Bordes y Detalles (region central)',
              fontsize=14, fontweight='bold', y=1.01)
@@ -328,7 +296,7 @@ for row, (name, orig) in enumerate(images_orig.items()):
 plt.savefig(OUTPUT_DIR / 'zoom_detalles.png', dpi=130, bbox_inches='tight')
 plt.show()
 
-# ── 9c. Mapa de diferencias |restaurada - original| ──────────────────────────
+
 fig, axes = plt.subplots(1, n_imgs, figsize=(5 * n_imgs, 5))
 fig.suptitle('Mapa de Cambios — |Restaurada − Original|',
              fontsize=13, fontweight='bold', y=1.02)
@@ -348,7 +316,7 @@ plt.tight_layout(pad=2.5, w_pad=3.0)
 plt.savefig(OUTPUT_DIR / 'mapa_cambios.png', dpi=130, bbox_inches='tight')
 plt.show()
 
-# ── 9d. Deteccion de bordes Canny: original vs restaurada ────────────────────
+
 def edges(img_np, lo=30, hi=100):
     gray8 = (img_np.mean(axis=2) * 255).astype(np.uint8)
     return cv2.Canny(gray8, lo, hi)
@@ -373,7 +341,7 @@ for row, (name, orig) in enumerate(images_orig.items()):
 plt.savefig(OUTPUT_DIR / 'analisis_bordes.png', dpi=130, bbox_inches='tight')
 plt.show()
 
-# ── 9e. Comparacion de ENL (original vs restaurada) ──────────────────────────
+
 nombres   = list(all_metrics.keys())
 enl_orig  = [all_metrics[n]['ENL_orig'] for n in nombres]
 enl_rest  = [all_metrics[n]['ENL_rest'] for n in nombres]
@@ -401,10 +369,10 @@ plt.tight_layout(pad=2.5)
 plt.savefig(OUTPUT_DIR / 'comparacion_enl.png', dpi=130, bbox_inches='tight')
 plt.show()
 
-# ── 9f. Tabla resumen de metricas ────────────────────────────────────────────
+
 ssim_o = [ssim(images_orig[n].mean(2),
                images_orig[n].mean(2), data_range=1.0) for n in nombres]
-# SSIM antes: auto-referencia = 1.0; lo que importa es SSIM orig vs rest
+
 ssim_vals = [all_metrics[n]['SSIM']     for n in nombres]
 psnr_vals = [all_metrics[n]['PSNR']     for n in nombres]
 
@@ -433,7 +401,7 @@ plt.tight_layout(pad=2.5, w_pad=3.5)
 plt.savefig(OUTPUT_DIR / 'comparacion_ssim_psnr.png', dpi=130, bbox_inches='tight')
 plt.show()
 
-# ── 9g. Guardar imagenes restauradas ─────────────────────────────────────────
+
 for name, rest in images_restored.items():
     out_path = OUTPUT_DIR / f'{name}_swinir.png'
     Image.fromarray((rest * 255).astype(np.uint8)).save(str(out_path))
